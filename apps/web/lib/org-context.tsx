@@ -36,7 +36,7 @@ export function useOrg() {
 const ORG_STORAGE_KEY = 'clawhuddle.currentOrgId';
 
 export function OrgProvider({ children }: { children: ReactNode }) {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const userId = session?.user?.id;
   const [orgs, setOrgs] = useState<OrgWithRole[]>([]);
   const [currentOrgId, setCurrentOrgId] = useState<string | null>(null);
@@ -66,6 +66,7 @@ export function OrgProvider({ children }: { children: ReactNode }) {
   }, [userId, currentOrgId]);
 
   useEffect(() => {
+    if (status === 'loading') return;
     if (!userId) {
       setLoading(false);
       return;
@@ -76,7 +77,7 @@ export function OrgProvider({ children }: { children: ReactNode }) {
     if (stored) setCurrentOrgId(stored);
 
     refreshOrgs();
-  }, [userId]);
+  }, [userId, status]);
 
   // When orgs load and no currentOrgId yet, pick the first one
   useEffect(() => {

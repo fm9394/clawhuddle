@@ -108,6 +108,21 @@ export async function orgGatewayRoutes(app: FastifyInstance) {
     }
   );
 
+  // Member self-stop (any org member can stop their own gateway)
+  app.post<{ Params: { orgId: string } }>(
+    '/api/orgs/:orgId/gateways/me/stop',
+    async (request, reply) => {
+      const { orgId } = request.params;
+      const memberId = request.orgMember!.id;
+      try {
+        const result = await stopGateway(orgId, memberId);
+        return { data: result };
+      } catch (err: any) {
+        return reply.status(400).send({ error: 'gateway_error', message: err.message });
+      }
+    }
+  );
+
   // Get gateway status
   app.get<{ Params: { orgId: string; memberId: string } }>(
     '/api/orgs/:orgId/gateways/members/:memberId/status',

@@ -158,6 +158,7 @@ function DashboardView() {
   const [runningCount, setRunningCount] = useState(0);
   const [skillStats, setSkillStats] = useState<{ enabled: number; total: number } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [stopping, setStopping] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!orgFetch) return;
@@ -203,6 +204,19 @@ function DashboardView() {
     }
   };
 
+  const stopGateway = async () => {
+    if (!orgFetch) return;
+    setStopping(true);
+    try {
+      await orgFetch('/gateways/me/stop', { method: 'POST' });
+      await fetchData();
+    } catch {
+      // ignore
+    } finally {
+      setStopping(false);
+    }
+  };
+
   if (loading || !ready) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -242,24 +256,48 @@ function DashboardView() {
           </div>
 
           {gwStatus === 'running' ? (
-            <button
-              onClick={openGateway}
-              className="w-full py-2.5 rounded-lg text-sm font-medium transition-colors"
-              style={{ background: 'var(--accent)', color: 'var(--text-inverse)' }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-hover)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent)'; }}
-            >
-              Open AI Assistant
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={openGateway}
+                className="flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors"
+                style={{ background: 'var(--accent)', color: 'var(--text-inverse)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent)'; }}
+              >
+                Open AI Assistant
+              </button>
+              <button
+                onClick={stopGateway}
+                disabled={stopping}
+                className="px-4 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-primary)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--red)'; e.currentTarget.style.color = 'var(--red)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-primary)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+              >
+                {stopping ? 'Stopping...' : 'Stop'}
+              </button>
+            </div>
           ) : gwStatus === 'deploying' ? (
-            <div className="flex items-center gap-2 py-2">
-              <div
-                className="w-4 h-4 rounded-full border-2 animate-spin"
-                style={{ borderColor: 'var(--border-primary)', borderTopColor: 'var(--blue)' }}
-              />
-              <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                Your assistant is starting up...
-              </span>
+            <div className="flex items-center justify-between py-2">
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-4 h-4 rounded-full border-2 animate-spin"
+                  style={{ borderColor: 'var(--border-primary)', borderTopColor: 'var(--blue)' }}
+                />
+                <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                  Your assistant is starting up...
+                </span>
+              </div>
+              <button
+                onClick={stopGateway}
+                disabled={stopping}
+                className="px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-50"
+                style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-primary)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--red)'; e.currentTarget.style.color = 'var(--red)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-primary)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+              >
+                {stopping ? 'Stopping...' : 'Stop'}
+              </button>
             </div>
           ) : (
             <p className="text-xs py-2" style={{ color: 'var(--text-tertiary)' }}>

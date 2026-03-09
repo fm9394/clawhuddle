@@ -250,6 +250,7 @@ export function MemberTable({ initialMembers }: Props) {
       return (
         <span className="flex gap-3 items-center">
           <span className="text-xs" style={{ color: 'var(--blue)' }}>starting up...</span>
+          <ActionBtn onClick={() => gatewayAction(member.id, 'stop')}>Stop</ActionBtn>
           <ActionBtn onClick={() => gatewayAction(member.id, 'remove')} color="danger">Remove</ActionBtn>
         </span>
       );
@@ -388,7 +389,7 @@ export function MemberTable({ initialMembers }: Props) {
         <table className="w-full text-sm">
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border-primary)' }}>
-              {['Name', 'Email', 'Role', 'Status', 'Gateway', 'Actions'].map((h) => (
+              {['Name', 'Email', 'Role', 'Status', 'Gateway', 'Gateway Actions', 'Member'].map((h) => (
                 <th
                   key={h}
                   className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider"
@@ -447,16 +448,20 @@ export function MemberTable({ initialMembers }: Props) {
                   </div>
                 </td>
                 <td className="px-4 py-3">
+                  {gatewayActions(member)}
+                </td>
+                <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
-                    <ActionBtn onClick={() => toggleStatus(member)}>
-                      {member.status === 'active' ? 'Disable' : 'Enable'}
-                    </ActionBtn>
+                    {member.user_id !== userId && (
+                      <ActionBtn onClick={() => toggleStatus(member)}>
+                        {member.status === 'active' ? 'Suspend' : 'Activate'}
+                      </ActionBtn>
+                    )}
                     {member.role !== 'owner' && member.user_id !== userId && (
                       <ActionBtn onClick={() => removeMember(member)} color="danger">
                         Remove
                       </ActionBtn>
                     )}
-                    {gatewayActions(member)}
                   </div>
                 </td>
               </tr>
