@@ -13,6 +13,7 @@ export interface ApiKeyDisplay {
   is_company_default: boolean;
   credential_type?: CredentialType;
   default_model?: string | null;
+  priority?: number;
 }
 
 interface Props {
@@ -110,6 +111,27 @@ export function ApiKeyForm({ initialKeys, fetchFn }: Props) {
     }
   };
 
+  const reorderKeys = async (provider: string, keyIds: string[]) => {
+    try {
+      await fetchFn('/api-keys/reorder', {
+        method: 'PUT',
+        body: JSON.stringify({ provider, keyIds }),
+      });
+      await refresh();
+      toast('Priority updated', 'success');
+    } catch (err: any) {
+      toast(err.message, 'error');
+    }
+  };
+
+  const moveKey = (provider: string, existingKeys: ApiKeyDisplay[], index: number, direction: 'up' | 'down') => {
+    const newKeys = [...existingKeys];
+    const swapIdx = direction === 'up' ? index - 1 : index + 1;
+    if (swapIdx < 0 || swapIdx >= newKeys.length) return;
+    [newKeys[index], newKeys[swapIdx]] = [newKeys[swapIdx], newKeys[index]];
+    reorderKeys(provider, newKeys.map((k) => k.id));
+  };
+
   const updateModel = async (keyId: string, provider: string, model: string) => {
     setSelectedModels((prev) => ({ ...prev, [provider]: model }));
     try {
@@ -124,16 +146,17 @@ export function ApiKeyForm({ initialKeys, fetchFn }: Props) {
     }
   };
 
-  const currentKey = (provider: string) => keys.find((k) => k.provider === provider);
+  const keysForProvider = (provider: string) =>
+    keys.filter((k) => k.provider === provider).sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
 
   return (
     <div className="space-y-6 max-w-lg">
       {PROVIDERS.map((providerConfig) => {
         const { id, label, placeholder, defaultModel, models, supportsSetupToken, setupTokenInstructions, supportsOAuth, oauthInstructions } = providerConfig;
-        const existing = currentKey(id);
         const tabs = getAvailableTabs(providerConfig);
         const activeTab = credTabs[id] ?? tabs[0];
-        const currentModel = selectedModels[id] || existing?.default_model || defaultModel;
+        const firstExisting = keysForProvider(id)[0];
+        const currentModel = selectedModels[id] || firstExisting?.default_model || defaultModel;
         return (
           <div
             key={id}
@@ -155,8 +178,9 @@ export function ApiKeyForm({ initialKeys, fetchFn }: Props) {
                   value={currentModel}
                   onChange={(e) => {
                     const val = e.target.value;
-                    if (existing) {
-                      updateModel(existing.id, id, val);
+                    const firstKey = keysForProvider(id)[0];
+                    if (firstKey) {
+                      updateModel(firstKey.id, id, val);
                     } else {
                       setSelectedModels((prev) => ({ ...prev, [id]: val }));
                     }
@@ -182,37 +206,102 @@ export function ApiKeyForm({ initialKeys, fetchFn }: Props) {
               )}
             </div>
 
-            {existing && (
-              <div className="flex items-center gap-2 mb-3">
-                <span
-                  className="text-[10px] font-medium px-1.5 py-0.5 rounded"
-                  style={{
-                    background: existing.credential_type === 'api_key' ? 'var(--bg-tertiary)' : 'var(--accent-muted, rgba(99,102,241,0.15))',
-                    color: existing.credential_type === 'api_key' ? 'var(--text-tertiary)' : 'var(--accent)',
-                  }}
-                >
-                  {CRED_TYPE_LABEL[existing.credential_type ?? 'api_key']}
-                </span>
-                <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                  <code
-                    className="px-1.5 py-0.5 rounded text-[11px] font-mono"
-                    style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
+            {(() => {
+              const providerKeys = keysForProvider(id);
+              // Multi-key provider (Anthropic): show list
+              if (id === 'anthropic' && providerKeys.length > 0) {
+                return (
+                  <div className="space-y-1 mb-3">
+                    {providerKeys.map((k, idx) => (
+                      <div key={k.id} className="flex items-center gap-2">
+                        <span className="text-[10px] text-right w-4" style={{ color: 'var(--text-tertiary)' }}>
+                          {idx + 1}.
+                        </span>
+                        <span
+                          className="text-[10px] font-medium px-1.5 py-0.5 rounded"
+                          style={{
+                            background: k.credential_type === 'api_key' ? 'var(--bg-tertiary)' : 'var(--accent-muted, rgba(99,102,241,0.15))',
+                            color: k.credential_type === 'api_key' ? 'var(--text-tertiary)' : 'var(--accent)',
+                          }}
+                        >
+                          {CRED_TYPE_LABEL[k.credential_type ?? 'api_key']}
+                        </span>
+                        <code
+                          className="px-1.5 py-0.5 rounded text-[11px] font-mono"
+                          style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
+                        >
+                          {k.key_masked}
+                        </code>
+                        <div className="flex gap-0.5 ml-auto">
+                          <button
+                            onClick={() => moveKey(id, providerKeys, idx, 'up')}
+                            disabled={idx === 0 || saving}
+                            className="text-xs px-1 py-0.5 rounded disabled:opacity-30"
+                            style={{ color: 'var(--text-tertiary)' }}
+                            title="Move up (higher priority)"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            onClick={() => moveKey(id, providerKeys, idx, 'down')}
+                            disabled={idx === providerKeys.length - 1 || saving}
+                            className="text-xs px-1 py-0.5 rounded disabled:opacity-30"
+                            style={{ color: 'var(--text-tertiary)' }}
+                            title="Move down (lower priority)"
+                          >
+                            ↓
+                          </button>
+                          <button
+                            onClick={() => deleteKey(k.id, label)}
+                            disabled={saving}
+                            className="text-xs px-2 py-0.5 rounded transition-colors disabled:opacity-50"
+                            style={{ color: 'var(--text-tertiary)' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--error, #ef4444)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              }
+              // Single-key providers: existing behavior
+              const existing = providerKeys[0];
+              if (!existing) return null;
+              return (
+                <div className="flex items-center gap-2 mb-3">
+                  <span
+                    className="text-[10px] font-medium px-1.5 py-0.5 rounded"
+                    style={{
+                      background: existing.credential_type === 'api_key' ? 'var(--bg-tertiary)' : 'var(--accent-muted, rgba(99,102,241,0.15))',
+                      color: existing.credential_type === 'api_key' ? 'var(--text-tertiary)' : 'var(--accent)',
+                    }}
                   >
-                    {existing.key_masked}
-                  </code>
-                </p>
-                <button
-                  onClick={() => deleteKey(existing.id, label)}
-                  disabled={saving}
-                  className="text-xs px-2 py-0.5 rounded transition-colors disabled:opacity-50"
-                  style={{ color: 'var(--text-tertiary)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--error, #ef4444)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
-                >
-                  Delete
-                </button>
-              </div>
-            )}
+                    {CRED_TYPE_LABEL[existing.credential_type ?? 'api_key']}
+                  </span>
+                  <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                    <code
+                      className="px-1.5 py-0.5 rounded text-[11px] font-mono"
+                      style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
+                    >
+                      {existing.key_masked}
+                    </code>
+                  </p>
+                  <button
+                    onClick={() => deleteKey(existing.id, label)}
+                    disabled={saving}
+                    className="text-xs px-2 py-0.5 rounded transition-colors disabled:opacity-50"
+                    style={{ color: 'var(--text-tertiary)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--error, #ef4444)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              );
+            })()}
 
             {tabs.length > 1 && (
               <div className="flex gap-1 mb-3">
