@@ -119,6 +119,14 @@ export async function orgApiKeyRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'validation', message: 'provider and keyIds are required' });
       }
       const db = getDb();
+      // Validate all keyIds belong to this provider+org
+      const existingIds = db.prepare(
+        'SELECT id FROM api_keys WHERE provider = ? AND is_company_default = 1 AND org_id = ?'
+      ).all(provider, request.orgId!) as { id: string }[];
+      const existingSet = new Set(existingIds.map((r) => r.id));
+      if (keyIds.length !== existingIds.length || !keyIds.every((id) => existingSet.has(id))) {
+        return reply.status(400).send({ error: 'validation', message: 'keyIds must match all keys for this provider' });
+      }
       const updateStmt = db.prepare('UPDATE api_keys SET priority = ? WHERE id = ? AND org_id = ?');
       const txn = db.transaction(() => {
         for (let i = 0; i < keyIds.length; i++) {
@@ -136,7 +144,7 @@ export async function orgApiKeyRoutes(app: FastifyInstance) {
 export function getOrgApiKey(orgId: string, provider: string): string | null {
   const db = getDb();
   const row = db.prepare(
-    'SELECT key_value FROM api_keys WHERE provider = ? AND is_company_default = 1 AND org_id = ?'
+    'SELECT key_value FROM api_keys WHERE provider = ? AND is_company_default = 1 AND org_id = ? ORDER BY priority ASC LIMIT 1'
   ).get(provider, orgId) as { key_value: string } | undefined;
   return row ? decodeKey(row.key_value) : null;
 }
@@ -145,7 +153,7 @@ export function getOrgApiKey(orgId: string, provider: string): string | null {
 export function getOrgAllApiKeys(orgId: string): { provider: string; key: string; credential_type: CredentialType; default_model: string | null }[] {
   const db = getDb();
   const rows = db.prepare(
-    'SELECT provider, key_value, credential_type, default_model FROM api_keys WHERE is_company_default = 1 AND org_id = ? ORDER BY priority ASC'
+    'SELECT provider, key_value, credential_type, default_model FROM api_keys WHERE is_company_default = 1 AND org_id = ? ORDER BY provider, priority ASC'
   ).all(orgId) as { provider: string; key_value: string; credential_type: string; default_model: string | null }[];
   return rows.map((r) => ({
     provider: r.provider,
