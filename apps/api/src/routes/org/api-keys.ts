@@ -28,7 +28,7 @@ export async function orgApiKeyRoutes(app: FastifyInstance) {
     async (request) => {
       const db = getDb();
       const keys = db.prepare(
-        'SELECT * FROM api_keys WHERE org_id = ? ORDER BY created_at DESC'
+        'SELECT * FROM api_keys WHERE org_id = ? ORDER BY provider, priority ASC, created_at DESC'
       ).all(request.orgId!) as any[];
 
       return {
@@ -38,6 +38,7 @@ export async function orgApiKeyRoutes(app: FastifyInstance) {
           key_value: undefined,
           credential_type: k.credential_type || 'api_key',
           default_model: k.default_model || null,
+          priority: k.priority ?? 0,
         })),
       };
     }
@@ -58,18 +59,20 @@ export async function orgApiKeyRoutes(app: FastifyInstance) {
       const ct: CredentialType = credentialType === 'token' ? 'token' : credentialType === 'oauth' ? 'oauth' : 'api_key';
 
       const db = getDb();
-      // Remove old default for this provider in this org
-      db.prepare('DELETE FROM api_keys WHERE provider = ? AND is_company_default = 1 AND org_id = ?').run(provider, request.orgId!);
+      const maxRow = db.prepare(
+        'SELECT MAX(priority) as max_p FROM api_keys WHERE provider = ? AND is_company_default = 1 AND org_id = ?'
+      ).get(provider, request.orgId!) as { max_p: number | null } | undefined;
+      const nextPriority = (maxRow?.max_p ?? -1) + 1;
 
       const id = uuid();
       db.prepare(
-        'INSERT INTO api_keys (id, provider, key_value, is_company_default, org_id, credential_type, default_model) VALUES (?, ?, ?, 1, ?, ?, ?)'
-      ).run(id, provider, encodeKey(key), request.orgId!, ct, defaultModel || null);
+        'INSERT INTO api_keys (id, provider, key_value, is_company_default, org_id, credential_type, default_model, priority) VALUES (?, ?, ?, 1, ?, ?, ?, ?)'
+      ).run(id, provider, encodeKey(key), request.orgId!, ct, defaultModel || null, nextPriority);
 
       syncAuthProfiles(request.orgId!);
 
       return reply.status(201).send({
-        data: { id, provider, key_masked: maskKey(key), is_company_default: true, credential_type: ct, default_model: defaultModel || null },
+        data: { id, provider, key_masked: maskKey(key), is_company_default: true, credential_type: ct, default_model: defaultModel || null, priority: nextPriority },
       });
     }
   );
@@ -105,6 +108,28 @@ export async function orgApiKeyRoutes(app: FastifyInstance) {
       return { data: { id, deleted: true } };
     }
   );
+
+  // Reorder API keys for a provider
+  app.put<{ Body: { provider: string; keyIds: string[] } }>(
+    '/api/orgs/:orgId/api-keys/reorder',
+    { preHandler: requireRole('owner', 'admin') },
+    async (request, reply) => {
+      const { provider, keyIds } = request.body;
+      if (!provider || !keyIds?.length) {
+        return reply.status(400).send({ error: 'validation', message: 'provider and keyIds are required' });
+      }
+      const db = getDb();
+      const updateStmt = db.prepare('UPDATE api_keys SET priority = ? WHERE id = ? AND org_id = ?');
+      const txn = db.transaction(() => {
+        for (let i = 0; i < keyIds.length; i++) {
+          updateStmt.run(i, keyIds[i], request.orgId!);
+        }
+      });
+      txn();
+      syncAuthProfiles(request.orgId!);
+      return { data: { provider, order: keyIds } };
+    }
+  );
 }
 
 // Helper used by gateway service — gets org-scoped API key
@@ -120,7 +145,7 @@ export function getOrgApiKey(orgId: string, provider: string): string | null {
 export function getOrgAllApiKeys(orgId: string): { provider: string; key: string; credential_type: CredentialType; default_model: string | null }[] {
   const db = getDb();
   const rows = db.prepare(
-    'SELECT provider, key_value, credential_type, default_model FROM api_keys WHERE is_company_default = 1 AND org_id = ?'
+    'SELECT provider, key_value, credential_type, default_model FROM api_keys WHERE is_company_default = 1 AND org_id = ? ORDER BY priority ASC'
   ).all(orgId) as { provider: string; key_value: string; credential_type: string; default_model: string | null }[];
   return rows.map((r) => ({
     provider: r.provider,
