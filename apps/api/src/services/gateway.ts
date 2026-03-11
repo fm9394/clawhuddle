@@ -176,32 +176,38 @@ function writeAuthProfiles(orgId: string, userId: string): { providerIds: string
   const profiles: Record<string, Record<string, unknown>> = {};
   const providerIds: string[] = [];
   const modelOverrides: Record<string, string> = {};
+  const order: Record<string, string[]> = {};
+  const providerCounters: Record<string, number> = {};
 
   for (const { provider, key, credential_type, default_model } of allKeys) {
     const providerConfig = PROVIDERS.find((p) => p.id === provider);
     if (!providerConfig) continue;
-    providerIds.push(provider);
-    if (default_model) modelOverrides[provider] = default_model;
+    if (!providerIds.includes(provider)) providerIds.push(provider);
+    if (default_model && !modelOverrides[provider]) modelOverrides[provider] = default_model;
+
+    // Generate unique profile ID
+    const count = (providerCounters[provider] ?? 0) + 1;
+    providerCounters[provider] = count;
+    const suffix = count === 1 ? '' : `-${count}`;
+
+    let profileId: string;
 
     if (credential_type === "oauth") {
-      // key is a JSON blob — Codex format: { tokens: { access_token, refresh_token, ... } }
       try {
         const oauth = JSON.parse(key);
         const tokens = oauth.tokens ?? oauth;
         if (!tokens.access_token || !tokens.refresh_token) continue;
 
-        // Extract expiry from JWT payload (middle segment)
         let expires: number | undefined;
         try {
           const payload = JSON.parse(
             Buffer.from(tokens.access_token.split(".")[1], "base64").toString(),
           );
           if (payload.exp) expires = payload.exp;
-        } catch {
-          /* non-JWT or malformed — skip expires */
-        }
+        } catch { /* non-JWT */ }
 
-        profiles[`${provider}:oauth`] = {
+        profileId = `${provider}:oauth${suffix}`;
+        profiles[profileId] = {
           type: "oauth",
           provider,
           access: tokens.access_token,
@@ -209,31 +215,42 @@ function writeAuthProfiles(orgId: string, userId: string): { providerIds: string
           ...(expires ? { expires } : {}),
         };
       } catch {
-        // Skip malformed OAuth JSON
         continue;
       }
     } else if (credential_type === "token") {
-      profiles[`${provider}:setup-token`] = {
+      profileId = `${provider}:setup-token${suffix}`;
+      profiles[profileId] = {
         type: "token",
         provider,
         token: key,
       };
     } else {
-      profiles[`${provider}:manual`] = { type: "api_key", provider, key };
+      profileId = `${provider}:manual${suffix}`;
+      profiles[profileId] = { type: "api_key", provider, key };
     }
+
+    if (!order[provider]) order[provider] = [];
+    order[provider].push(profileId);
+  }
+
+  // Only include order for providers with multiple profiles
+  const orderFiltered: Record<string, string[]> = {};
+  for (const [provider, ids] of Object.entries(order)) {
+    if (ids.length > 1) orderFiltered[provider] = ids;
   }
 
   const authProfilesPath = path.join(
     getGatewayDir(orgId, userId),
-    "agents",
-    "main",
-    "agent",
-    "auth-profiles.json",
+    "agents", "main", "agent", "auth-profiles.json",
   );
   fs.mkdirSync(path.dirname(authProfilesPath), { recursive: true });
   fs.writeFileSync(
     authProfilesPath,
-    JSON.stringify({ version: 1, profiles }, null, 2),
+    JSON.stringify({
+      version: 1,
+      profiles,
+      ...(Object.keys(orderFiltered).length > 0 ? { order: orderFiltered } : {}),
+    }, null, 2),
   );
 
   return { providerIds, modelOverrides };
